@@ -69,12 +69,12 @@ print(result.iterations)  # Number of execute-observe cycles
 
 ## RLM vs Traditional Agents
 
-| Aspect | Traditional Agent | RLM |
-|--------|-------------------|-----|
+| Aspect                | Traditional Agent         | RLM                            |
+| --------------------- | ------------------------- | ------------------------------ |
 | Problem Decomposition | Human predefines workflow | Model decides how to decompose |
-| Tool Usage | Fixed tool set | Code as universal tool |
-| Control Flow | Human-designed (ReAct) | Model-driven iteration |
-| Flexibility | Limited to designed tools | Unlimited (any valid Python) |
+| Tool Usage            | Fixed tool set            | Code as universal tool         |
+| Control Flow          | Human-designed (ReAct)    | Model-driven iteration         |
+| Flexibility           | Limited to designed tools | Unlimited (any valid Python)   |
 
 ## Supported Models
 
@@ -100,6 +100,23 @@ uv run python examples/simple_qa.py
 # Long document processing
 uv run python examples/long_document.py
 ```
+
+## Benchmark Results
+
+### Weak Model + RLM vs Strong Model Direct
+
+Comparing **Haiku 4.5 + RLM** vs **Opus 4.5 Direct** on employee salary aggregation task.
+
+| Records | Context      | Expected   | RLM Answer | Direct Answer | RLM Cost | Direct Cost | RLM Time | Direct Time | Winner |
+| ------- | ------------ | ---------- | ---------- | ------------- | -------- | ----------- | -------- | ----------- | ------ |
+| 100     | 24,390 chars | $1,105,000 | $1,105,000 | $145,000      | $0.0437  | $0.0410     | 43.9s    | 3.3s        | RLM    |
+| 200     | 48,835 chars | $2,822,000 | $2,822,000 | $145,000      | $0.0469  | $0.0791     | 53.8s    | 3.8s        | RLM    |
+
+**Key Findings:**
+
+- RLM with weak model (Haiku 4.5) achieves **correct answers** while strong model (Opus 4.5) fails on longer contexts
+- Cost is comparable or lower with RLM
+- Trade-off: RLM takes longer due to multiple iterations
 
 ## API Reference
 
