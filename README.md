@@ -23,6 +23,7 @@ RLM:              LLM <-> REPL Environment
 - **Code as Tool**: LLM writes Python to explore context (`context[:1000]`, `re.findall()`, etc.)
 - **Recursive Decomposition**: Complex problems split via `llm_query()` sub-calls
 - **Self-Correction**: LLM sees execution errors and fixes its own code
+- **Output Offloading**: Large outputs auto-stored as variables to prevent context rot
 
 ## Installation
 
@@ -63,9 +64,47 @@ print(result.iterations)  # Number of execute-observe cycles
 
 1. **Query sent to LLM** with system prompt explaining REPL environment
 2. **LLM writes code** in ```repl blocks to explore context
-3. **Code executed**, output returned to LLM
+3. **Code executed**, output returned to LLM (large outputs auto-offloaded)
 4. **LLM iterates** until it finds the answer
 5. **FINAL(answer)** signals completion
+
+## Output Offloading (Context Rot Prevention)
+
+RLM automatically offloads large outputs to variables to prevent context rot:
+
+```
+Without Offloading:
+  Iteration 1: output (2000 chars) -> history grows
+  Iteration 2: output (1500 chars) -> history grows more
+  Iteration N: history bloated     -> quality degrades
+
+With Offloading:
+  Iteration 1: output -> stored as _result_0, preview (200 chars) in history
+  Iteration 2: output -> stored as _result_1, preview in history
+  Iteration N: history stays small -> quality maintained
+```
+
+**Benchmark Results** (50 employee records, Haiku 3.5):
+
+| Metric | With Offload | Without Offload | Improvement |
+|--------|-------------|-----------------|-------------|
+| Input Tokens | 8,980 | 10,748 | **-16.4%** |
+| History Size | 2,154 chars | 5,636 chars | **-61.8%** |
+| Avg Output | 718 chars | 1,878 chars | **-62%** |
+
+Data still accessible via `print(_result_0)`. Run benchmark: `uv run python examples/offload_benchmark.py`
+
+### REPL Functions
+
+The LLM has access to these memory management functions:
+
+```python
+# Check what's stored in memory
+memory_status()  # -> {'context': 10000, '_result_0': 2000, ...}
+
+# Clean up variables no longer needed
+forget('_result_0', 'temp_var')  # -> "Cleared: _result_0, temp_var"
+```
 
 ## RLM vs Traditional Agents
 
@@ -99,6 +138,9 @@ uv run python examples/simple_qa.py
 
 # Long document processing
 uv run python examples/long_document.py
+
+# Output offloading benchmark (compare with/without)
+uv run python examples/offload_benchmark.py
 ```
 
 ## Benchmark Results
@@ -124,12 +166,25 @@ Comparing **Haiku 4.5 + RLM** vs **Opus 4.5 Direct** on employee salary aggregat
 
 ```python
 def run(
-    query: str,              # Question to answer
-    context: str | list,     # Data to process (stored in REPL, not sent to LLM)
+    query: str,                        # Question to answer
+    context: str | list,               # Data to process (stored in REPL, not sent to LLM)
     model: str = "gpt-4o-mini",
     max_iterations: int = 20,
+    max_output_chars: int = 30000,     # Max chars before truncation
     verbose: bool = False,
 ) -> RLMResult
+```
+
+### `rlm.RLM()` (Advanced)
+
+```python
+rlm_instance = rlm.RLM(
+    model: str = "gpt-4o-mini",
+    sub_model: str = None,             # Model for llm_query() calls
+    max_iterations: int = 20,
+    max_output_chars: int = 30000,     # Max chars before truncation
+    verbose: bool = False,
+)
 ```
 
 ### `RLMResult`

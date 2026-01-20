@@ -9,13 +9,25 @@ The loop continues until the LLM signals it has an answer (FINAL/FINAL_VAR).
 """
 
 import re
-from typing import Any
+from typing import Any, Callable, Optional
 from dataclasses import dataclass, field
 
 import litellm
 
 from .repl import ReplEnvironment
 from .prompt import build_system_prompt, build_user_message
+
+
+@dataclass
+class IterationEvent:
+    """Event data for each iteration step (for streaming)."""
+    iteration: int
+    event_type: str  # "llm_response", "code_execution", "sub_call", "final"
+    content: str
+    code_block: str | None = None
+    output: str | None = None
+    has_error: bool = False
+    tokens_used: int = 0
 
 
 @dataclass
@@ -45,6 +57,7 @@ class RLM:
         max_iterations: int = 20,
         max_output_chars: int = 30000,
         verbose: bool = False,
+        iteration_delay: float = 0,
     ):
         """
         Initialize RLM.
@@ -55,17 +68,24 @@ class RLM:
             max_iterations: Maximum iterations before forced termination
             max_output_chars: Maximum chars for REPL output truncation
             verbose: Print debug information
+            iteration_delay: Seconds to wait between iterations (for rate limiting)
         """
         self.model = model
         self.sub_model = sub_model or model
         self.max_iterations = max_iterations
         self.max_output_chars = max_output_chars
         self.verbose = verbose
+        self.iteration_delay = iteration_delay
 
         # Track metrics
         self._sub_call_count = 0
 
-    def run(self, query: str, context: str | list[str]) -> RLMResult:
+    def run(
+        self,
+        query: str,
+        context: str | list[str],
+        on_iteration: Optional[Callable[[IterationEvent], None]] = None,
+    ) -> RLMResult:
         """
         Run RLM on a query with given context.
 
@@ -74,6 +94,8 @@ class RLM:
         Args:
             query: The question/task to answer
             context: The data to process (stored in REPL, not sent to LLM)
+            on_iteration: Optional callback for streaming iteration events.
+                          Called with IterationEvent for each step.
 
         Returns:
             RLMResult with answer and metrics
@@ -103,8 +125,18 @@ class RLM:
         code_executions = 0
         history = []
 
+        # Track whether any code has been successfully executed
+        has_executed_code = False
+
         # Main loop: execute-observe-iterate
         for iteration in range(self.max_iterations):
+            # Rate limit delay (skip first iteration)
+            if iteration > 0 and self.iteration_delay > 0:
+                import time
+                if self.verbose:
+                    print(f"\n[Waiting {self.iteration_delay}s for rate limit...]")
+                time.sleep(self.iteration_delay)
+
             if self.verbose:
                 print(f"\n{'='*50}")
                 print(f"Iteration {iteration + 1}/{self.max_iterations}")
@@ -123,6 +155,15 @@ class RLM:
 
             if self.verbose:
                 print(f"\n[LLM Response]\n{assistant_content[:500]}...")
+
+            # Emit LLM response event
+            if on_iteration:
+                on_iteration(IterationEvent(
+                    iteration=iteration + 1,
+                    event_type="llm_response",
+                    content=assistant_content,
+                    tokens_used=response.usage.completion_tokens,
+                ))
 
             # Add to history
             history.append({
@@ -148,11 +189,25 @@ class RLM:
                     execution_output += f"[Code Block {i+1} Output]\n{output}\n\n"
 
                     # Check if this execution had an error
-                    if "[ERROR]" in output:
+                    block_has_error = "[ERROR]" in output
+                    if block_has_error:
                         has_error = True
+                    else:
+                        has_executed_code = True  # Mark successful code execution
 
                     if self.verbose:
                         print(f"\n[Output]\n{output[:500]}...")
+
+                    # Emit code execution event
+                    if on_iteration:
+                        on_iteration(IterationEvent(
+                            iteration=iteration + 1,
+                            event_type="code_execution",
+                            content=f"Code block {i+1} executed",
+                            code_block=code,
+                            output=output,
+                            has_error=block_has_error,
+                        ))
 
                 history.append({
                     "iteration": iteration + 1,
@@ -163,15 +218,36 @@ class RLM:
             # Only check for final answer if:
             # 1. No code blocks (LLM is ready to answer without more computation)
             # 2. OR code ran successfully without errors
-            # This prevents the LLM from giving answers before seeing code output
+            # 3. AND at least one code block has been successfully executed
+            # This prevents the LLM from giving answers before actually exploring the context
             if not code_blocks or not has_error:
                 final_answer = self._extract_final(assistant_content, repl)
                 if final_answer is not None:
+                    # Reject FINAL if no code has been executed yet
+                    if not has_executed_code:
+                        if self.verbose:
+                            print(f"\n[FINAL rejected - no code executed yet, must explore context first]")
+                        # Force LLM to write code
+                        messages.append({"role": "assistant", "content": assistant_content})
+                        messages.append({
+                            "role": "user",
+                            "content": "You must write code to explore the context before providing a final answer. The context is stored in the `context` variable. Please write a ```repl code block to analyze it."
+                        })
+                        continue
+
                     # If there were code blocks, the LLM should see output first
                     # Only accept FINAL if there were no code blocks in this response
                     if not code_blocks:
                         if self.verbose:
                             print(f"\n[FINAL ANSWER] {final_answer}")
+
+                        # Emit final event
+                        if on_iteration:
+                            on_iteration(IterationEvent(
+                                iteration=iteration + 1,
+                                event_type="final",
+                                content=final_answer,
+                            ))
 
                         return RLMResult(
                             answer=final_answer,

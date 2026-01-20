@@ -29,6 +29,13 @@ You have access to a Python REPL with:
 
 3. `print()` - To output results back to this conversation
 
+4. `memory_status()` - Shows all variables and their sizes in memory.
+   - Use this to see what data you have stored
+
+5. `forget(*var_names)` - Clears variables from memory.
+   - Use this to clean up intermediate results you no longer need
+   - Example: `forget('temp_data', 'old_results')`
+
 ## How to Write Code
 Wrap your Python code in triple backticks with 'repl' identifier:
 
@@ -101,12 +108,14 @@ print(f"Verification: {{verification}}")
 ```
 
 ## Important Notes
-- Output will be truncated if too long (~30K chars max)
+- **Output Offloading**: Large outputs (>500 chars) are automatically stored as variables (e.g., `_result_0`).
+  You'll see a preview and can access the full output via `print(_result_0)`.
 - Variables persist across code executions
 - If you get an error, read it and fix your code in the next iteration
 - NEVER guess - always compute and verify your answer with actual code
 - Always print() your computed result before using FINAL()
 - If code fails, fix it and try again - do NOT give a FINAL answer based on failed code
+- Use `memory_status()` to see what's stored, `forget()` to clean up when done
 
 Now, please answer the following query by exploring the context:
 '''
